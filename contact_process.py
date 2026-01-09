@@ -10,6 +10,7 @@ import argparse
 import datetime
 import contextlib
 import modules.io as io
+import modules.cpsim_io_options as ioopt
 import modules.cpsim_numba as cp
 
 def main(): 
@@ -23,15 +24,16 @@ def main():
     parser = argparse.ArgumentParser(description='Contact process in 1+1 dimensions or mean-field all-to-all graph\n\n(l_c=3.297848 for ring; l_c=1 for mean-field)',formatter_class=argparse.RawTextHelpFormatter)
     parser = io.add_simulation_parameters(parser)
 
-    args              = io.namespace_to_structtype(parser.parse_args())
+    args              = io.parse_input_args(parser.parse_args())
 
     # validating inputs to the simulation
-    args.sim          = cp.str_to_SimulationType(args.sim)
-    args.graph        = cp.str_to_GraphType(args.graph)
-    args.update       = cp.str_to_UpdateType(args.update)
-    args.iterdynamics = cp.str_to_StateIterType(args.iterdynamics)
+    #args.sim          = ioopt.str_to_Options_sim(args.sim)
+    #args.graph        = ioopt.str_to_Options_graph(args.graph)
+    #args.update       = ioopt.str_to_Options_update(args.update)
+    #args.iterdynamics = ioopt.str_to_Options_iterdynamics(args.iterdynamics)
     args.docstring    = io.get_help_string(parser)
     args.X0Rand       = not args.noX0Rand
+    args.LyLx         = numpy.array(cp._largest_close_factors(args.N))
     args.dt           = cp.Get_Simulation_Timescale(args) # dt = 1/N if (not parallel update) and (expandtime); otherwise, dt=1
     args.expandtime   = args.expandtime and not cp.is_parallel_update(args.update) # expandtime==True only if it is True AND it isn't a parallel update simulation
     args.outputFile   = io.get_new_file_name(io.get_output_filename(args.outputFile))
@@ -71,7 +73,7 @@ def main():
     io.save_simulation_file(sys.argv, args, rho, time, X_data)
     del rho, time, X_data # releasing memory to avoid memory error when merging files
     if args.saveSites and args.writeOnRun and args.mergespkfile:
-        io.merge_simulation_files(args.outputFile, args.spkFileName, remove_spk_file=False, verbose=True)
+        io.merge_simulation_spike_files(args.outputFile, args.spkFileName, remove_spk_file=False, verbose=True)
 
     print('done')
     print(' ')

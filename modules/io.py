@@ -6,21 +6,22 @@ import numpy
 import scipy.io
 import contextlib
 import modules.misc_func as misc
+import modules.cpsim_io_options as ioopt
 
 def add_simulation_parameters(parser):
     parser.add_argument('-l'           , nargs=1, required=False, metavar='l_PARAM'         , type=float , default=[1.1]            , help='CP rate (l_c=3.297848 for ring, iterdynamics=md; l_c=2 for ring, iterdynamics=to; l_c=1 for mean-field)')
     parser.add_argument('-N'           , nargs=1, required=False, metavar='N_PARAM'         , type=int   , default=[10000]          , help='number of sites in the network')
     parser.add_argument('-M'           , nargs=1, required=False, metavar='M_PARAM'         , type=int   , default=[100]            , help='number of memory time steps for quasistationary simulation (whenever the system goes into absorbing, it is placed in a random state chosen from the last M visited states)')
-    parser.add_argument('-X0'          , nargs=1, required=False, metavar='X0_PARAM'        , type=int   , default=[1]              , help='IC to each site (a scalar 0 or 1)')
-    parser.add_argument('-fX0'         , nargs=1, required=False, metavar='fX0_PARAM'       , type=float , default=[0.5]            , help='fraction of sites assigned to X0 as IC (remaining are zero)')
-    parser.add_argument('-dtsample'    , nargs=1, required=False, metavar='dtsample_PARAM'  , type=int   , default=[1]              , help='sampling interval (in units of dt=1/N if expandtime is set; this is ignored when update == parallel).\n\tWe only sample the system in time steps that are a multiple of dtsample.\n\tThis reduces dramatically the saved data in sequential update if dtsample=N.\n\tFor example,\n\t\tif expandtime==True:\n\t\t\t* dt=1/N;\n\t\t\t* sampling interval s = dtsample;\n\t\t\t* running time T = tTotal * N\n\t\t\t* simulation time t = 1 to T,\n\t\t\t* sampling when t%%s == 0 (i.e., t is a multiple of dtsample)\n\t\t\t\tif dtsample = 1: sample dt=1/N time interval (every time step)\n\t\t\t\tif dtsample = N: sample every N*dt = 1 Monte Carlo step (in practice, this means N time steps)\n\t\tif expandtime==False:\n\t\t\t* dt = 1\n\t\t\t* sampling interval s = dtsample;\n\t\t\t* running time T = tTotal;\n\t\t\t* simulation time t = 1 to T\n\t\t\t* sampling when t%%s == 0 (i.e., t is a multiple of dtsample)\n\t\t\t\tif dtsample == 1: sample every time step\n\t\t\t\tif dtsample == N: sample every Monte Carlo step (i.e., N time steps)')
+    parser.add_argument('-X0'          , nargs=1, required=False, metavar='X0_PARAM'        , type=int   , default=[1]              , help='(integer 0 or 1) IC to a fraction fX0 of the N sites')
+    parser.add_argument('-fX0'         , nargs=1, required=False, metavar='fX0_PARAM'       , type=float , default=[0.5]            , help='fraction of sites assigned to X0 as IC (the remaining are zero)')
+    parser.add_argument('-dtsample'    , nargs=1, required=False, metavar='dtsample_PARAM'  , type=int   , default=[1]              , help='sampling interval (in units of dt=1/N if expandtime is set; or units in dt=1 when update==parallel).\n\tWe only sample the system in time steps that are a multiple of dtsample.\n\tThis reduces dramatically the saved data in sequential update if dtsample=k*N (k>=1).\n\tFor example,\n\t\tif expandtime==True:\n\t\t\t* dt=1/N;\n\t\t\t* sampling interval s = dtsample;\n\t\t\t* running time T = tTotal * N\n\t\t\t* simulation time t = 1 to T,\n\t\t\t* sampling when t%%s == 0 (i.e., t is a multiple of dtsample)\n\t\t\t\tif dtsample = 1: sample dt=1/N time interval (every time step)\n\t\t\t\tif dtsample = N: sample every N*dt = 1 Monte Carlo step (in practice, this means N time steps)\n\t\tif expandtime==False:\n\t\t\t* dt = 1\n\t\t\t* sampling interval s = dtsample;\n\t\t\t* running time T = tTotal;\n\t\t\t* simulation time t = 1 to T\n\t\t\t* sampling when t%%s == 0 (i.e., t is a multiple of dtsample)\n\t\t\t\tif dtsample == 1: sample every time step\n\t\t\t\tif dtsample == N: sample every Monte Carlo step (i.e., N time steps)')
     parser.add_argument('-tTotal'      , nargs=1, required=False, metavar='tTotal_PARAM'    , type=int   , default=[10000]          , help='total number of time steps. This becomes tTotal/dt if expandtime == True')
     parser.add_argument('-tTrans'      , nargs=1, required=False, metavar='tTrans_PARAM'    , type=int   , default=[0]              , help='number of transient time steps. This becomes tTrans/dt if expandtime == True')
     parser.add_argument('-outputFile'  , nargs=1, required=False, metavar='OUTPUT_FILE_NAME', type=str   , default=['cp.mat']       , help='name of the output file')
-    parser.add_argument('-graph'       , nargs=1, required=False, metavar='GRAPH_TYPE'      , type=str   , default=['ring']         , choices=['mf', 'alltoall', 'ring', 'ringfree']        , help='mf,alltoall -> mean-field simulation; ring -> 1+1 simulation with periodic boundary conditions; ringfree -> ring with free boundaries')
-    parser.add_argument('-iterdynamics', nargs=1, required=False, metavar='ITER_TYPE'       , type=str   , default=['marro_dickman'], choices=['marro_dickman', 'tome_oliveira', 'md', 'to'], help='marro_dickman,md -> described in pg 178pdf/162book Marro & Dickman book; tome_oliveira,to -> described in pg 308pdf Tome & Oliveira book before eq 13.6')
-    parser.add_argument('-update'      , nargs=1, required=False, metavar='UPDATE_TYPE'     , type=str   , default=['seq']          , choices=['seq','sequential','par','parallel']         , help='seq -> standard update scheme: 1 particle update/ts (paragraph after eq 3.35 in Henkel book); par -> parallel update (attempts to update all sites at each ts, matches the E/I network)')
-    parser.add_argument('-sim'         , nargs=1, required=False, metavar='SIM_TYPE'        , type=str   , default=['timeevo']      , choices=['timeevo', 'aval']                           , help='timeevo -> simple time evolution simulation (quasistatic if M > 0); aval -> avalanche simulation; seeds 1 site every time activity dies out')
+    parser.add_argument('-graph'       , nargs=1, required=False, metavar='GRAPH_TYPE'      , type=str   , default=['ring']         , choices=['mf', 'alltoall', 'ring', 'ringfree','squareperiodic','squarefree'], help='mf,alltoall -> mean-field simulation; ring -> 1+1 simulation with periodic boundary conditions; ringfree -> ring with free boundaries; squarefree -> free boundary square lattice; squareperiodic -> periodic boundary square lattice. The lateral sizes of a square lattice are inferred from N, choosing the largest integers that multiply to give N [[e.g., N=15 -> LyLx=[3,5] rows,cols; square lattice site k = x + y*Lx; x -> 0-based cols left to right, y -> 0-based rows top to bottom]]')
+    parser.add_argument('-iterdynamics', nargs=1, required=False, metavar='ITER_TYPE'       , type=str   , default=['marro_dickman'], choices=['marro_dickman', 'tome_oliveira', 'md', 'to']                      , help='marro_dickman,md -> described in pg 178pdf/162book Marro & Dickman book; tome_oliveira,to -> described in pg 308pdf Tome & Oliveira book before eq 13.6')
+    parser.add_argument('-update'      , nargs=1, required=False, metavar='UPDATE_TYPE'     , type=str   , default=['seq']          , choices=['seq','sequential','par','parallel']                               , help='seq -> standard update scheme: 1 particle update/ts (paragraph after eq 3.35 in Henkel book); par -> parallel update (attempts to update all sites at each ts, matches the E/I network)')
+    parser.add_argument('-sim'         , nargs=1, required=False, metavar='SIM_TYPE'        , type=str   , default=['timeevo']      , choices=['timeevo', 'aval']                                                 , help='timeevo -> simple time evolution simulation (quasistatic if M > 0); aval -> avalanche simulation; seeds 1 site every time activity dies out')
     parser.add_argument('-noX0Rand'    , required=False, action='store_true', default=False, help='if set, Xi is generated sequentially')
     parser.add_argument('-saveSites'   , required=False, action='store_true', default=False, help='if set, saves the Xi variable for every site (may consume a lot of memory!)')
     parser.add_argument('-writeOnRun'  , required=False, action='store_true', default=False, help='if set, writes the Xi variables to an output *_spk.txt file during the main time loop (needs -saveSites to be set, and avoids memory errors at the expense of a slower simulation)')
@@ -34,11 +35,23 @@ def get_help_string(parser):
         parser.print_help()
     return help_buffer.getvalue()
 
-def import_mat_file(path,variable_names=None,return_structtype=True):
+def _convert_str_to_enum(args):
+    for k,v in args.items():
+        if ioopt.has_options_enum(k):
+            args[k] = ioopt.convert_to_enum(k,v)
+    return args
+
+def import_mat_file(path,variable_names=None,return_structtype=True,convert_options_to_enum=False):
     d = scipy.io.loadmat(path, squeeze_me=True, variable_names=variable_names)
     if not return_structtype:
-        return d
-    return misc.structtype(**{ k:v for k,v in d.items() if ((not k.startswith('__')) and (not k.endswith('__'))) })
+        if convert_options_to_enum:
+            return _convert_str_to_enum(d)
+        else:
+            return d
+    if convert_options_to_enum:
+        return _convert_str_to_enum(misc.structtype(**{ k:v for k,v in d.items() if ((not k.startswith('__')) and (not k.endswith('__'))) }))
+    else:
+        return misc.structtype(**{ k:v for k,v in d.items() if ((not k.startswith('__')) and (not k.endswith('__'))) })
 
 def import_spk_file(fname):
     if not os.path.isfile(fname):
@@ -78,7 +91,66 @@ def _get_merged_file_name(fname_main_output):
     fname, _ = os.path.splitext(fname_main_output)
     return fname + '_merged.mat'
 
-def merge_simulation_files(fname_main_output, fname_spk_output='', remove_spk_file=True, verbose=True):
+def save_merged_simulation_files(fname,d_merged):
+    scipy.io.savemat(fname,d_merged,appendmat=True,long_field_names=True,do_compression=True)
+    return fname
+
+def merge_simulation_files(fname_list,ensure_equal_params=True,verbose=True):
+    """
+    merge the simulation files in f_list.
+    Data is sequentially appended to data variables,
+    incrementing time by one from the previously appended last time point.
+
+    if ensure_equal_params is set (default), then
+    only merges if all files have the same configuration
+    (only differing in the data variables rho, time, X_time, X_ind, X_values)
+
+    these parameters are ignored in the match check-up:
+    . M, X0, X0Rand, docstring, fX0, mergespkfile, noX0Rand, outputFile, saveSites, sim, spkFileName, tTotal, tTrans, writeOnRun
+    """
+    if not(type(fname_list) is list):
+        fname_list = [fname_list]
+    assert all(type(f) is str for f in fname_list),'all items in f_list must be file names'
+    f_merged         = import_mat_file(fname_list[0])
+    rho_merge_ind    = numpy.zeros(len(fname_list),dtype=int)
+    X_merge_ind      = numpy.zeros(len(fname_list),dtype=int)
+    rho_merge_ind[0] = 0
+    X_merge_ind[0]   = 0
+    for k,f in enumerate(fname_list[1:]):
+        d = import_mat_file(f)
+        if ensure_equal_params and (not _is_equal_sim_param(f_merged,d)):
+            if verbose:
+                print('::: WARNING ::: merge_simulation_files ... unmatching parameters, skipping ->', f)
+            continue
+        rho_merge_ind[k+1] = f_merged.time.size
+        X_merge_ind[k+1]   = f_merged.X_time.size
+        t_last             = f_merged.time[-1] + f_merged.dt*f_merged.dtsample
+        f_merged.time      = numpy.hstack((f_merged.time    , d.time+t_last     ))
+        f_merged.rho       = numpy.hstack((f_merged.rho     , d.rho             ))
+        f_merged.X_time    = numpy.hstack((f_merged.X_time  , d.X_time+t_last   ))
+        f_merged.X_ind     = numpy.hstack((f_merged.X_ind   , d.X_ind           ))
+        f_merged.X_values  = numpy.hstack((f_merged.X_values, d.X_values        ))
+    f_merged.outputFile    = fname_list
+    f_merged.rho_merge_ind = rho_merge_ind
+    f_merged.X_merge_ind   = X_merge_ind
+    f_merged.help          = 'rho_merge_ind , X_merge_ind -> index of rho or X in which a new file begins'
+    return f_merged
+
+def _is_equal_sim_param(d1,d2):
+    params_ignore = ['M', 'X0', 'X0Rand', 'cmd_line', 'docstring', 'fX0', 'mergespkfile', 'noX0Rand', 'outputFile', 'saveSites', 'sim', 'spkFileName', 'tTotal', 'tTrans', 'writeOnRun', 'rho', 'time', 'X_time', 'X_ind', 'X_values']
+    for k,v in d1.items():
+        if k in params_ignore:
+            continue # ignores k
+        #print(k,v)
+        if type(v) is numpy.ndarray:
+            if (v.shape != d2[k].shape) or (v!=d2[k]).any():
+                return False
+        else:
+            if v != d2[k]:
+                return False
+    return True
+
+def merge_simulation_spike_files(fname_main_output, fname_spk_output='', remove_spk_file=True, verbose=True):
     d = import_mat_file(fname_main_output)
     if len(fname_spk_output) == 0:
         fname_spk_output    = _get_spk_file_name(fname_main_output, d.spkFileName)
@@ -100,16 +172,24 @@ def merge_simulation_files(fname_main_output, fname_spk_output='', remove_spk_fi
     if verbose:
         print(f'  ... merged file saved as {fname_merged}')
 
+
+def _convert_enum_to_str(d):
+    for k,v in d.items():
+        if ('enum' in str(type(d[k]))) and hasattr(d[k],'name'):
+            d[k] = str(v).split('.')[1]
+    return d
+
 def save_simulation_file(argv, args, rho, time, X_data):
     # X_data[i,:] = [t,k,X]
     if not (type(X_data) is numpy.ndarray):
         X_data = numpy.array(X_data, dtype=float)
         if X_data.shape == (0,):
             X_data = X_data.reshape((0,3))
-    args.sim          = args.sim.name.lower()          if hasattr(args.sim         ,'name') else str(args.sim         ).lower()
-    args.graph        = args.graph.name.lower()        if hasattr(args.graph       ,'name') else str(args.graph       ).lower()
-    args.update       = args.update.name.lower()       if hasattr(args.update      ,'name') else str(args.update      ).lower()
-    args.iterdynamics = args.iterdynamics.name.lower() if hasattr(args.iterdynamics,'name') else str(args.iterdynamics).lower()
+    #args.sim          = args.sim.name.lower()          if hasattr(args.sim         ,'name') else str(args.sim         ).lower()
+    #args.graph        = args.graph.name.lower()        if hasattr(args.graph       ,'name') else str(args.graph       ).lower()
+    #args.update       = args.update.name.lower()       if hasattr(args.update      ,'name') else str(args.update      ).lower()
+    #args.iterdynamics = args.iterdynamics.name.lower() if hasattr(args.iterdynamics,'name') else str(args.iterdynamics).lower()
+    args = _convert_enum_to_str(args)
     scipy.io.savemat(args.outputFile,dict(cmd_line=' '.join(argv),time=time,rho=rho, X_values=X_data[:,2], X_ind=X_data[:,1], X_time=X_data[:,0],**args),long_field_names=True,do_compression=True)
     print(f'  ... simulation file saved ::: {args.outputFile}')
 
@@ -225,8 +305,8 @@ def list_of_arr_to_arr_of_obj(X):
     return Y
 
 
-def namespace_to_structtype(a):
-    return misc.structtype(**fix_args_lists_as_scalars(copy.deepcopy(a.__dict__)))
+def parse_input_args(a):
+    return misc.structtype(**_convert_str_to_enum(fix_args_lists_as_scalars(copy.deepcopy(a.__dict__))))
 
 #def get_write_spike_data_functions(saveSites,writeOnRun):
 #    if saveSites:

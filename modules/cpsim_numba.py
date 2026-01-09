@@ -2,64 +2,8 @@ import numpy
 from enum import IntEnum
 from numba import njit,types,typeof
 from numba.typed import List
+from modules.cpsim_io_options import is_parallel_update,Options_graph,Options_iterdynamics,Options_sim
 
-class GraphType(IntEnum):
-    ALLTOALL = 0
-    RING     = 1
-    RINGFREE = 2
-
-class StateIterType(IntEnum):
-    TOME_OLIVEIRA = 0
-    MARRO_DICKMAN = 1
-
-class SimulationType(IntEnum):
-    TIMEEVO = 0
-    AVAL    = 1
-
-class UpdateType(IntEnum):
-    PARALLEL = 0
-    SEQUENTIAL = 1
-
-def str_to_GraphType(graph_str):
-    graph_str = graph_str.lower()
-    if (graph_str == 'alltoall') or (graph_str == 'mf'):
-        return GraphType.ALLTOALL
-    elif (graph_str == 'ring'):
-        return GraphType.RING
-    elif (graph_str == 'ringfree'):
-        return GraphType.RINGFREE
-    else:
-        raise ValueError(f'Unknown graph type: {graph_str}')
-
-def str_to_SimulationType(sim_str):
-    sim_str = sim_str.lower()
-    if (sim_str == 'timeevo'):
-        return SimulationType.TIMEEVO
-    elif (sim_str == 'aval'):
-        return SimulationType.AVAL
-    else:
-        raise ValueError(f'Unknown simulation type: {sim_str}')
-
-def str_to_UpdateType(updt_str):
-    updt_str = updt_str.lower()
-    if (updt_str == 'parallel') or (updt_str == 'par'):
-        return UpdateType.PARALLEL
-    elif (updt_str == 'sequential') or (updt_str == 'seq'):
-        return UpdateType.SEQUENTIAL
-    else:
-        raise ValueError(f'Unknown update type: {updt_str}')
-
-def str_to_StateIterType(itype_str):
-    itype_str = itype_str.lower()
-    if (itype_str == 'tome_oliveira') or (itype_str == 'to') or (itype_str == 'tomeoliveira'):
-        return StateIterType.TOME_OLIVEIRA
-    elif (itype_str == 'marro_dickman') or (itype_str == 'md') or (itype_str == 'marrodickman'):
-        return StateIterType.MARRO_DICKMAN
-    else:
-        raise ValueError(f'Unknown state iterator type: {itype_str}')
-
-def is_parallel_update(update:UpdateType):
-    return update == UpdateType.PARALLEL
 
 def Get_Simulation_Func(args):
     #if args.sim == SimulationType.AVAL:
@@ -67,16 +11,16 @@ def Get_Simulation_Func(args):
     #        args.update     = UpdateType.PARALLEL # forcing parallel update for avalanche
     #        args.expandtime = False
     #        print(' ::: WARNING ::: forcing parallel update and no expandtime because sim == %s'%args.sim)
-    if args.graph == GraphType.ALLTOALL:
+    if args.graph == Options_graph.ALLTOALL:
         if is_parallel_update(args.update):
             return Run_MF_parallel
         else:
             return Run_MF_sequential
     else: # (args.graph == 'ring') or (args.graph == 'ringfree')
         if is_parallel_update(args.update):
-            return Run_RingGraph_parallel
+            return Run_Graph_parallel
         else:
-            return Run_RingGraph_sequential
+            return Run_Graph_sequential
 
 def Get_Simulation_Timescale(args):
     dt = 1.0
@@ -134,14 +78,14 @@ def get_random_state(X,f_act):
         X[i],X[j] = X[j],X[i] # Shuffle X in-place using Fisher-Yates
     return X
 
-type_X_data_item = types.Tuple((types.float64, types.int64, types.int64))
-type_X_data      = types.ListType(type_X_data_item)
+_type_X_data_item = types.Tuple((types.float64, types.int64, types.int64))
+_type_X_data      = types.ListType(_type_X_data_item)
 
-@njit(type_X_data(type_X_data,types.float64,types.int64,types.int64))
+@njit(_type_X_data(_type_X_data,types.float64,types.int64,types.int64))
 def save_spk_data_fake(X_data, t, k, X):
     return X_data
 
-@njit(type_X_data(type_X_data,types.float64,types.int64,types.int64))
+@njit(_type_X_data(_type_X_data,types.float64,types.int64,types.int64))
 def save_spk_data(X_data, t, k, X):
     if X:
         X_data.append((t,k,X))
@@ -150,18 +94,18 @@ def save_spk_data(X_data, t, k, X):
         #X_time.append(t)
     return X_data
 
-@njit(type_X_data(type_X_data,types.float64,types.int64,types.int64))
+@njit(_type_X_data(_type_X_data,types.float64,types.int64,types.int64))
 def write_spk_data_fake(X_data,t,k,X):
     return X_data
 
-@njit(type_X_data(type_X_data,types.float64,types.int64,types.int64))
+@njit(_type_X_data(_type_X_data,types.float64,types.int64,types.int64))
 def write_spk_data(X_data,t,k,X):
     if X:
         #spkFile.write(str(t) + ',' + str(k) + ',' + str(X) + '\n')
         print(t,',',k,',',X)
     return X_data
 
-@njit(type_X_data(type_X_data,types.float64,types.int64,types.int64))
+@njit(_type_X_data(_type_X_data,types.float64,types.int64,types.int64))
 def write_spk_data_debug(X_data,t,k,X):
     if X:
         #spkFile.write(str(t) + ',' + str(k) + ',' + str(X) + '\n')
@@ -169,8 +113,8 @@ def write_spk_data_debug(X_data,t,k,X):
     return X_data
 
 
-type_writesave_spk_data = types.FunctionType(type_X_data(type_X_data,types.float64,types.int64,types.int64))
-@njit(types.Tuple((type_writesave_spk_data, type_writesave_spk_data))(types.boolean, types.boolean))
+_type_writesave_spk_data = types.FunctionType(_type_X_data(_type_X_data,types.float64,types.int64,types.int64))
+@njit(types.Tuple((_type_writesave_spk_data, _type_writesave_spk_data))(types.boolean, types.boolean))
 def get_write_spike_data_functions(saveSites,writeOnRun):
     if saveSites:
         if writeOnRun:
@@ -184,17 +128,17 @@ def get_write_spike_data_functions(saveSites,writeOnRun):
         save_spk_time  = save_spk_data_fake
     return write_spk_time,save_spk_time
 
-@njit(type_X_data(types.int64[:],types.float64,types.boolean,types.boolean))
+@njit(_type_X_data(types.int64[:],types.float64,types.boolean,types.boolean))
 def save_initial_network_state(X, t0, saveSites, writeOnRun):
     write_spk_time,save_spk_time = get_write_spike_data_functions(saveSites,writeOnRun)
-    X_data                       = List.empty_list(type_X_data_item) # get_initial_network_state_for_output(X,saveSites and not writeOnRun)
+    X_data                       = List.empty_list(_type_X_data_item) # get_initial_network_state_for_output(X,saveSites and not writeOnRun)
     N                            = len(X)
     for i in range(N):
         X_data = save_spk_time( X_data, t0, i, X[i]) # this function can just be a dummy placeholder depending on saveSites and writeOnRun
         _      = write_spk_time(X_data, t0, i, X[i]) # this function can just be a dummy placeholder depending on saveSites and writeOnRun
     return X_data
 
-@njit(type_X_data(types.boolean,type_writesave_spk_data,type_writesave_spk_data,type_X_data,types.boolean,types.float64,types.float64,types.int64,types.int64[:],types.int64))
+@njit(_type_X_data(types.boolean,_type_writesave_spk_data,_type_writesave_spk_data,_type_X_data,types.boolean,types.float64,types.float64,types.int64,types.int64[:],types.int64))
 def dump_spike_data_sequential_update(do_dump_data,save_spk_time_func,write_spk_time_func,X_data,dtsample_is_1,t,dt,i,X,Xa):
     if do_dump_data:
         for k in range(X.size):
@@ -246,36 +190,92 @@ def close_file(spkFile,spkFileName,saveSites_and_writeOnRun):
         #print('##################################################')
 
 
-#@njit
-#def get_ring_neighbors_periodic(N):
-#    return [ [(k-1)%N,(k+1)%N] for k in range(N) ] # the (k+-1) mod N implements the periodic boundary conditions
 
-@njit(types.int64[:,:](types.int64))
+@njit(types.Tuple((types.int64,types.int64))(types.int64))
+def _largest_close_factors(N):
+    sqrt_N = int(numpy.sqrt(N))
+    for i in range(sqrt_N, 0, -1):
+        if N % i == 0:
+            return i, N // i
+    return 1, N  # fallback for prime N
+
+_get_neighbors_output_type = types.Tuple((types.int64[:,:],types.int64[:]))
+@njit(_get_neighbors_output_type(types.int64))
 def get_ring_neighbors_periodic(N):
-    n = numpy.empty((N, 2), dtype=numpy.int64)
+    n = numpy.empty((N, 2), dtype=numpy.int64) # index of neighbors
+    K = 2*numpy.ones(N,dtype=numpy.int64)      # number of neighbors
     for k in range(N):
         n[k, 0] = (k - 1) % N  # left neighbor
         n[k, 1] = (k + 1) % N  # right neighbor
-    return n
+    return n,K
 
-@njit(types.int64[:,:](types.int64))
+@njit(_get_neighbors_output_type(types.int64))
 def get_ring_neighbors_free(N):
-    n        = get_ring_neighbors_periodic(N)
-    n[0,0]   = 1   # first site connects only to the right
-    n[0,1]   = 1   # first site connects only to the right
-    n[N-1,0] = N-2 # last site connects only to the left
-    n[N-1,1] = N-2 # last site connects only to the left
-    return n
+    n,K      = get_ring_neighbors_periodic(N) # n=index of neighbors ; K=number of neighbors
+    n[0  ,0] = 1    # first site connects only to the right
+    n[0  ,1] = -666 # first site connects only to the right
+    n[N-1,0] = N-2  # last site connects only to the left
+    n[N-1,1] = -666 # last site connects only to the left
+    K[0]     = 1 # first site has only 1 neighbor
+    K[N-1]   = 1 # last site has only 1 neighbor
+    return n,K
 
-@njit(types.int64[:,:](types.int64,types.int64))
-def get_ring_neighbors(graph:GraphType,N):
-    if graph == GraphType.RING:
+@njit(_get_neighbors_output_type(types.int64))
+def get_squareperiodic_neighbors(N):
+    Ly,Lx = _largest_close_factors(N) # Lx -> number of columns; Ly -> number of rows
+    n     = numpy.empty((N, 4), dtype=numpy.int64) # index of neighbors
+    K     = 4*numpy.ones(N,dtype=numpy.int64)      # number of neighbors
+    for y in range(Ly): # rows
+        for x in range(Lx): # columns
+            k       = x + y*Lx
+            n[k, 0] = (((x-1)%Lx) +     y      * Lx)  # left neighbor
+            n[k, 1] = (((x+1)%Lx) +     y      * Lx)  # right neighbor
+            n[k, 2] = (    x      + ((y-1)%Ly) * Lx)  # up neighbor    ---  x grows from top to bottom
+            n[k, 3] = (    x      + ((y+1)%Ly) * Lx)  # down neighbor  ---  x grows from top to bottom
+    return n,K
+
+@njit(_get_neighbors_output_type(types.int64))
+def get_squarefree_neighbors(N):
+    Ly,Lx = _largest_close_factors(N) # Lx -> number of columns; Ly -> number of rows
+    n     = -666*numpy.ones((N, 4), dtype=numpy.int64) # index of neighbors
+    K     =    4*numpy.ones(N,dtype=numpy.int64)       # number of neighbors
+    for y in range(Ly):
+        for x in range(Lx):
+            k   = x + y*Lx
+            loc = []
+            Kl  = 0
+            k_l = (((x-1)%Lx) +     y      * Lx)
+            k_r = (((x+1)%Lx) +     y      * Lx)
+            k_u = (    x      + ((y-1)%Ly) * Lx)
+            k_d = (    x      + ((y+1)%Ly) * Lx)
+            if y > 0: # not top row
+                loc.append(k_u) # has an upper neighbor
+                Kl+=1
+            if y < (Ly-1): # not bottom row
+                loc.append(k_d) # has a down neighbor
+                Kl+=1
+            if x > 0: # not left column
+                loc.append(k_l) # has a left neighbor
+                Kl+=1
+            if x < (Lx-1): # not right column
+                loc.append(k_r) # has a right neighbor
+                Kl+=1
+            n[k,:Kl] = loc
+            K[k]     = Kl
+    return n,K
+
+@njit(_get_neighbors_output_type(types.int64,types.int64))
+def get_graph_neighbors(graph:Options_graph,N):
+    if graph == Options_graph.RING:
         return get_ring_neighbors_periodic(N)
-    elif graph == GraphType.RINGFREE:
+    elif graph == Options_graph.RINGFREE:
         return get_ring_neighbors_free(N)
+    elif graph == Options_graph.SQUAREPERIODIC:
+        return get_squareperiodic_neighbors(N)
+    elif graph == Options_graph.SQUAREFREE:
+        return get_squarefree_neighbors(N)
     else:
         raise ValueError(f'get_neighbors not defined for graph {graph}')
-
 
 @njit(types.int64(types.boolean))
 def bool2int(x):
@@ -361,6 +361,8 @@ def state_iter_Tome_Oliveira_mod(X,n,inv_l):
 def state_iter_Dickman_mod(X,n,v):
     """
     SEEMS TO HAVE WRONG RATES (check debug table of transition rates)
+    kept here only for reference
+
      this code was adapted from what was
      described in pg 178pdf/162book Marro & Dickman book.
      Each step involves randomly choosing a process - creation with probability v=lambda/(1+lambda),
@@ -441,10 +443,10 @@ def state_iter_Dickman(X, n, v):
 
 
 #type_state_iter = typeof(state_iter_Dickman)
-type_state_iter = types.FunctionType(types.int64(types.int64, types.float64, types.float64))
-@njit(type_state_iter(types.int64))
+_type_state_iter = types.FunctionType(types.int64(types.int64, types.float64, types.float64))
+@njit(_type_state_iter(types.int64))
 def get_site_state_iterator(iterdynamics):
-    if iterdynamics == StateIterType.TOME_OLIVEIRA:
+    if iterdynamics == Options_iterdynamics.TOME_OLIVEIRA:
         state_iter  = state_iter_Tome_Oliveira_mod
     else:
         state_iter  = state_iter_Dickman
@@ -452,7 +454,7 @@ def get_site_state_iterator(iterdynamics):
 
 @njit(types.float64(types.int64, types.float64))
 def get_site_state_iterator_alpha(iterdynamics,l):
-    if iterdynamics == StateIterType.TOME_OLIVEIRA:
+    if iterdynamics == Options_iterdynamics.TOME_OLIVEIRA:
         alpha       = 1.0 / l # chance of annihilating if site is occupied, book TOme e Oliveira
     else:
         alpha       = l / (1.0 + l) # v, book of Marro & Dickman
@@ -494,15 +496,15 @@ def get_site_state_iterator_alpha(iterdynamics,l):
 #            Listuint_LIFO_add(lst_active_sites,lst_active_sites_N,k)
 #    return lst_active_sites,lst_active_sites_N
 
-type_cyclic_stack_data = types.Tuple((types.float64[:],types.int64))
-@njit(type_cyclic_stack_data(types.int64))
+_type_cyclic_stack_data = types.Tuple((types.float64[:],types.int64))
+@njit(_type_cyclic_stack_data(types.int64))
 def CyclicStack_Init(maxsize):
     #stack, maxsize, count = cyclic_stack_data
     stack = numpy.full(maxsize, 0.0)
     count = 0
     return stack,count
 
-@njit(type_cyclic_stack_data(types.float64[:],types.int64,types.int64,types.int64,types.float64))
+@njit(_type_cyclic_stack_data(types.float64[:],types.int64,types.int64,types.int64,types.float64))
 def CyclicStack_Set(stack, maxsize, count, index, value):
     #stack, maxsize, count = cyclic_stack_data
     stack[index % maxsize] = value
@@ -555,8 +557,11 @@ def get_IC(X0, fX0, X0Rand, N):
         X = get_ordered_state(X,fX0)
     return X
 
-@njit(types.Tuple((types.int64[:],types.int64,types.float64[:],types.int64))(type_state_iter,types.int64,types.float64,types.int64[:],types.int64,types.float64,types.boolean,types.boolean,types.int64[:,:]))
-def Run_transient_sequential(state_iter,tTrans_eff,alpha,X,M,fX0,is_aval_sim,is_meanfield,neigh):
+
+_run_transient_output_type = types.Tuple((types.int64[:],types.int64,types.float64[:],types.int64))
+_run_transient_input_type  = (_type_state_iter,types.int64,types.float64,types.int64[:],types.int64,types.float64,types.boolean,types.boolean,types.int64[:,:],types.int64[:])
+@njit(_run_transient_output_type(*_run_transient_input_type))
+def Run_transient_sequential(state_iter,tTrans_eff,alpha,X,M,fX0,is_aval_sim,is_meanfield,neigh,K):
     N                   = len(X)
     N_fl                = float(len(X))
     sum_X               = sum(X)
@@ -571,14 +576,14 @@ def Run_transient_sequential(state_iter,tTrans_eff,alpha,X,M,fX0,is_aval_sim,is_
         if is_meanfield:
             n_act_neigh     = float(sum_X-X[i])/(N_fl-1.0)
         else:
-            n_act_neigh     = sum(X[neigh[i]])/float(len(neigh[i]))
+            n_act_neigh     = sum(X[neigh[i,:K[i]]])/float(K[i]) #sum(X[neigh[i]])/float(len(neigh[i]))
         X[i]                = state_iter(X[i],n_act_neigh,alpha) # updating site i
         sum_X              += X[i] - Xa # +1 if activated i; -1 if deactivated i
         rho_memory,cs_count = CyclicStack_Set(rho_memory,M,cs_count,t,float(sum_X) / N_fl)
     return X,sum_X,rho_memory,cs_count
 
-@njit(types.Tuple((types.int64[:],types.int64,types.float64[:],types.int64))(type_state_iter,types.int64,types.float64,types.int64[:],types.int64,types.float64,types.boolean,types.boolean,types.int64[:,:]))
-def Run_transient_parallel(state_iter,tTrans,alpha,X,M,fX0,is_aval_sim,is_meanfield,neigh):
+@njit(_run_transient_output_type(*_run_transient_input_type))
+def Run_transient_parallel(state_iter,tTrans,alpha,X,M,fX0,is_aval_sim,is_meanfield,neigh,K):
     N                   = len(X)
     N_fl                = float(len(X))
     sum_X               = sum(X)
@@ -597,58 +602,71 @@ def Run_transient_parallel(state_iter,tTrans,alpha,X,M,fX0,is_aval_sim,is_meanfi
         sum_X           = 0
         for i in range(N):
             if not is_meanfield:
-                n_act_neigh = sum(X_prev[neigh[i]])/float(len(neigh[i]))
+                #n_act_neigh = sum(X_prev[neigh[i]])/float(len(neigh[i]))
+                n_act_neigh = sum(X_prev[neigh[i,:K[i]]])/float(K[i])
             X[i]   = state_iter(X[i],n_act_neigh,alpha)
             sum_X += X[i]
         rho_prev            = float(sum_X) / N_fl
         rho_memory,cs_count = CyclicStack_Set(rho_memory,M,cs_count,t,rho_prev) 
     return X,sum_X,rho_memory,cs_count
 
-type_simulation_result  = types.Tuple((types.float64[:],types.float64[:],type_X_data))
-type_mfsimulation_input = (types.int64,types.int64,types.float64,types.boolean,types.float64,types.int64,types.int64,types.float64,types.int64,types.int64,types.int64,types.int64,types.boolean,types.boolean,types.string)
-@njit(type_simulation_result(*type_mfsimulation_input))
+_type_simulation_result  = types.Tuple((types.float64[:],types.float64[:],_type_X_data))
+_type_mfsimulation_input = (types.int64,types.int64,types.float64,types.boolean,types.float64,types.int64,types.int64,types.float64,types.int64,types.int64,types.int64,types.int64,types.boolean,types.boolean,types.string)
+@njit(_type_simulation_result(*_type_mfsimulation_input))
 def Run_MF_parallel(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,iterdynamics,sim,saveSites,writeOnRun,spkFileName):
     # all sites update in the same time step -- matches the GL model
     X                   = get_IC(X0, fX0, X0Rand, N)     
-    is_aval_sim         = sim == SimulationType.AVAL
+    is_aval_sim         = sim == Options_sim.AVAL
     state_iter          = get_site_state_iterator(iterdynamics)
     alpha               = get_site_state_iterator_alpha(iterdynamics,l)
     N_fl                = float(N)
+    dtsample            = int(dtsample-1) if dtsample > 1 else 1
 
-    X,sum_X,rho_memory,cs_count  = Run_transient_parallel(state_iter,tTrans,alpha,X,M,fX0,is_aval_sim,True,numpy.zeros((0,2),dtype=numpy.int64))
+    X,sum_X,rho_memory,cs_count  = Run_transient_parallel(state_iter,tTrans,alpha,X,M,fX0,is_aval_sim,True,numpy.zeros((0,2),dtype=numpy.int64),numpy.zeros((0,),dtype=numpy.int64))
     rho_prev                     = float(sum_X) / N_fl
 
     # defining output functions and data variables
     write_spk_time,save_spk_time = get_write_spike_data_functions(saveSites,writeOnRun)
-    X_data                       = save_initial_network_state(X, 0.0, saveSites, writeOnRun)
     spk_file                     = open_file(spkFileName, saveSites and writeOnRun, False)
+    X_data                       = save_initial_network_state(X, 0.0, saveSites, writeOnRun)
 
-    rho                 = numpy.zeros(tTotal-tTrans,dtype=numpy.float64)
-    rho[0]              = rho_prev
+
+    n_data              = 1 + (tTotal - tTrans - 1) // dtsample    
+    rho                 = numpy.zeros(n_data, dtype=numpy.float64) # numpy.zeros(tTotal-tTrans, dtype=numpy.float64)
+    time                = numpy.zeros(n_data, dtype=numpy.float64) # numpy.zeros(tTotal-tTrans, dtype=numpy.float64)
+    trec                = 0
+    rho[trec]           = rho_prev
+    time[trec]          = 0.0
     rho_memory,cs_count = CyclicStack_Init(M)
     rho_memory,cs_count = CyclicStack_Set(rho_memory,M,cs_count,0,rho_prev)
     for t in range(1,tTotal-tTrans):
-        sum_X = 0
-        for i in range(N):
-            X[i]   = state_iter(X[i],rho_prev,alpha)
-            sum_X += X[i]
-            X_data = save_spk_time(X_data, t, i, X[i]) # this function can just be a dummy placeholder depending on saveSites and writeOnRun
-            _      = write_spk_time(X_data, t, i, X[i])               # this function can just be a dummy placeholder depending on saveSites and writeOnRun
-        # updates rho_temp and X as needed if the network activity must be restarted
         continue_time_loop, X, sum_X = check_network_activity(X, is_aval_sim, sum_X, rho_memory, M, cs_count)
         if not continue_time_loop:
             break
-        rho_prev      = float(sum_X) / N_fl
-        rho[t]        = rho_prev
+        rho_prev = float(sum_X) / N_fl
+        sum_X    = 0
+        if t%dtsample == 0: # we only save spikes for time steps multiples of dtsample
+            trec      += 1
+            for i in range(N):
+                X[i]   = state_iter(X[i],rho_prev,alpha)
+                sum_X += X[i]
+                X_data = save_spk_time(X_data, t, i, X[i]) # this function can just be a dummy placeholder depending on saveSites and writeOnRun
+                _      = write_spk_time(X_data, t, i, X[i])               # this function can just be a dummy placeholder depending on saveSites and writeOnRun
+            rho[trec]  = float(sum_X) / N_fl
+            time[trec] = float(t)
+        else:
+            for i in range(N):
+                X[i]   = state_iter(X[i],rho_prev,alpha)
+                sum_X += X[i]
         rho_memory,cs_count = CyclicStack_Set(rho_memory,M,cs_count,t,rho[t])
     close_file(spk_file,spkFileName,saveSites and writeOnRun)
-    return rho, numpy.arange(rho.size,dtype=numpy.float64), X_data
+    return rho, time, X_data
 
-@njit(type_simulation_result(*type_mfsimulation_input))
+@njit(_type_simulation_result(*_type_mfsimulation_input))
 def Run_MF_sequential(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,iterdynamics,sim,saveSites,writeOnRun,spkFileName):
     # only 1 site is attempted update at each time step
     X                   = get_IC(X0, fX0, X0Rand, N)
-    is_aval_sim         = sim == SimulationType.AVAL
+    is_aval_sim         = sim == Options_sim.AVAL
     state_iter          = get_site_state_iterator(iterdynamics)
     alpha               = get_site_state_iterator_alpha(iterdynamics,l)
     N_fl                = float(N)
@@ -658,7 +676,7 @@ def Run_MF_sequential(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,iterdynamics
     dtsample_is_1       = dtsample == 1
     n_neigh             = N_fl - 1.0
 
-    X,sum_X,rho_memory,cs_count  = Run_transient_sequential(state_iter,tTrans_eff,alpha,X,M,fX0,is_aval_sim,True,numpy.zeros((0,2),dtype=numpy.int64))
+    X,sum_X,rho_memory,cs_count  = Run_transient_sequential(state_iter,tTrans_eff,alpha,X,M,fX0,is_aval_sim,True,numpy.zeros((0,2),dtype=numpy.int64),numpy.zeros((0,),dtype=numpy.int64))
     
     # defining output functions and data variables
     write_spk_time,save_spk_time = get_write_spike_data_functions(saveSites,writeOnRun)
@@ -695,48 +713,61 @@ def Run_MF_sequential(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,iterdynamics
     return rho, time, X_data
 
 type_netsimulation_input = (types.int64,types.int64,types.float64,types.boolean,types.float64,types.int64,types.int64,types.float64,types.int64,types.int64,types.int64,types.int64 ,types.int64,types.boolean,types.boolean,types.string)
-@njit(type_simulation_result(*type_netsimulation_input))
-def Run_RingGraph_parallel(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,graph,iterdynamics,sim,saveSites,writeOnRun,spkFileName):
+@njit(_type_simulation_result(*type_netsimulation_input))
+def Run_Graph_parallel(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,graph,iterdynamics,sim,saveSites,writeOnRun,spkFileName):
     X                   = get_IC(X0, fX0, X0Rand, N)
-    neigh               = get_ring_neighbors(graph,N) #neigh[i][0] -> index of left neighbor; neigh[i][1] -> index of right neighbor;
-    is_aval_sim         = sim == SimulationType.AVAL
+    neigh,K             = get_graph_neighbors(graph,N) #neigh[i][0] -> index of left neighbor; neigh[i][1] -> index of right neighbor;
+    is_aval_sim         = sim == Options_sim.AVAL
     state_iter          = get_site_state_iterator(iterdynamics)
     alpha               = get_site_state_iterator_alpha(iterdynamics,l)
     N_fl                = float(N)
+    dtsample            = int(dtsample-1) if dtsample > 1 else 1
 
-    X,sum_X,rho_memory,cs_count  = Run_transient_parallel(state_iter,tTrans,alpha,X,M,fX0,is_aval_sim,False,neigh)
+    X,sum_X,rho_memory,cs_count  = Run_transient_parallel(state_iter,tTrans,alpha,X,M,fX0,is_aval_sim,False,neigh,K)
 
     # defining output functions and data variables
     write_spk_time,save_spk_time = get_write_spike_data_functions(saveSites,writeOnRun)
     spk_file                     = open_file(spkFileName, saveSites and writeOnRun, False)
     X_data                       = save_initial_network_state(X, 0.0, saveSites, writeOnRun)
-    
-    rho                 = numpy.zeros(tTotal-tTrans, dtype=numpy.float64)
-    rho[0]              = float(sum_X) / N_fl
+
+    n_data              = 1 + (tTotal - tTrans - 1) // dtsample    
+    rho                 = numpy.zeros(n_data, dtype=numpy.float64) # numpy.zeros(tTotal-tTrans, dtype=numpy.float64)
+    time                = numpy.zeros(n_data, dtype=numpy.float64) # numpy.zeros(tTotal-tTrans, dtype=numpy.float64)
+    trec                = 0
+    rho[trec]           = float(sum_X) / N_fl
+    time[trec]          = 0.0
     rho_memory,cs_count = CyclicStack_Init(M)
     rho_memory,cs_count = CyclicStack_Set(rho_memory,M,cs_count,0,rho[0])
     for t in range(1,tTotal-tTrans):
-        X_prev = X.copy()
-        sum_X  = 0
-        for i in range(N):
-            # need to fix this line to use X_prev in the num of active neighbors
-            X[i]   = state_iter(X[i],sum(X_prev[neigh[i]])/float(len(neigh[i])),alpha)
-            sum_X += X[i]
-            X_data = save_spk_time(X_data, t, i, X[i]) # this function can just be a dummy placeholder depending on saveSites and writeOnRun
-            _      = write_spk_time(X_data, t, i, X[i])               # this function can just be a dummy placeholder depending on saveSites and writeOnRun
         continue_time_loop, X, sum_X = check_network_activity(X, is_aval_sim, sum_X, rho_memory, M, cs_count)
         if not continue_time_loop:
             break
-        rho[t]        = float(sum_X) / N_fl
+        X_prev = X.copy()
+        sum_X  = 0
+        if t%dtsample == 0: # we only save spikes for time steps multiples of dtsample
+            trec      += 1
+            for i in range(N):
+                #X[i]   = state_iter(X[i],sum(X_prev[neigh[i]])/float(len(neigh[i])),alpha)
+                X[i]   = state_iter(X[i],sum(X_prev[neigh[i,:K[i]]])/float(K[i]),alpha)
+                sum_X += X[i]
+                X_data = save_spk_time(X_data, t, i, X[i]) # this function can just be a dummy placeholder depending on saveSites and writeOnRun
+                _      = write_spk_time(X_data, t, i, X[i])               # this function can just be a dummy placeholder depending on saveSites and writeOnRun
+            rho[trec]  = float(sum_X) / N_fl
+            time[trec] = float(t)
+        else:
+            for i in range(N):
+                #X[i]   = state_iter(X[i],sum(X_prev[neigh[i]])/float(len(neigh[i])),alpha)
+                X[i]   = state_iter(X[i],sum(X_prev[neigh[i,:K[i]]])/float(K[i]),alpha)
+                sum_X += X[i]
         rho_memory,cs_count = CyclicStack_Set(rho_memory,M,cs_count,t,rho[t])
     close_file(spk_file,spkFileName,saveSites and writeOnRun)
-    return rho, numpy.arange(rho.size,dtype=numpy.float64), X_data
+    return rho, time, X_data
 
-@njit(type_simulation_result(*type_netsimulation_input))
-def Run_RingGraph_sequential(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,graph,iterdynamics,sim,saveSites,writeOnRun,spkFileName):
+@njit(_type_simulation_result(*type_netsimulation_input))
+def Run_Graph_sequential(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,graph,iterdynamics,sim,saveSites,writeOnRun,spkFileName):
     X                   = get_IC(X0,fX0,X0Rand,N)
-    neigh               = get_ring_neighbors(graph,N) #neigh[i][0] -> index of left neighbor; neigh[i][1] -> index of right neighbor;
-    is_aval_sim         = sim == SimulationType.AVAL
+    neigh,K             = get_graph_neighbors(graph,N) #neigh[i][0] -> index of left neighbor; neigh[i][1] -> index of right neighbor;
+    is_aval_sim         = sim == Options_sim.AVAL
     state_iter          = get_site_state_iterator(iterdynamics)
     alpha               = get_site_state_iterator_alpha(iterdynamics,l)
     N_fl                = float(N)
@@ -745,7 +776,7 @@ def Run_RingGraph_sequential(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,graph
     dtsample            = int(dtsample-1) if dtsample>1 else 1
     dtsample_is_1       = dtsample == 1
 
-    X,sum_X,rho_memory,cs_count  = Run_transient_sequential(state_iter,tTrans_eff,alpha,X,M,fX0,is_aval_sim,False,neigh)
+    X,sum_X,rho_memory,cs_count  = Run_transient_sequential(state_iter,tTrans_eff,alpha,X,M,fX0,is_aval_sim,False,neigh,K)
     
     # defining output functions and data variables
     write_spk_time,save_spk_time = get_write_spike_data_functions(saveSites,writeOnRun)
@@ -770,7 +801,8 @@ def Run_RingGraph_sequential(N,X0,fX0,X0Rand,l,tTrans,tTotal,dt,dtsample,M,graph
             break
         i      = numpy.random.randint(0,N) # selecting update site
         Xa     = X[i]
-        X[i]   = state_iter(X[i],sum(X[neigh[i]])/float(len(neigh[i])),alpha) # updating site i
+        #X[i]   = state_iter(X[i],sum(X[neigh[i]])/float(len(neigh[i])),alpha) # updating site i
+        X[i]   = state_iter(X[i],sum(X[neigh[i,:K[i]]])/float(K[i]),alpha) # updating site i
         sum_X += X[i] - Xa  # +1 if activated i; -1 if deactivated i
         if t%dtsample == 0: # we only save spikes for time steps multiples of dtsample
             trec      += 1

@@ -1,7 +1,9 @@
 import math
 import numpy
+import scipy.io
 import scipy.stats
 import scipy.signal
+import modules.io as io
 import modules.misc_func as misc
 from numba import njit
 from enum import IntEnum
@@ -298,101 +300,125 @@ def calc_dispersion_PCA(C):
         return misc.unpack_list_of_tuples([ _calc_dispersion_PCA_numba(c) for c in C ])
     return _calc_dispersion_PCA_numba(C)
 
-@njit
+#@njit
 def _calc_dispersion_PCA_numba(C):
-    for i in range(C.shape[0]):
-        for j in range(C.shape[1]):
-            if numpy.isnan(C[i, j]):
-                C[i, j] = 0.0
-    lambda_eig,V_matrix = numpy.linalg.eig(C)
+    #for i in range(C.shape[0]):
+    #    for j in range(C.shape[1]):
+    #        if numpy.isnan(C[i, j]):
+    #            C[i, j] = 0.0
+    C[numpy.isnan(C)]   = 0.0
+    if numpy.all(C==C.T):
+        lambda_eig,V_matrix = numpy.linalg.eigh(C)
+    else:
+        lambda_eig,V_matrix = numpy.linalg.eig(C)
     lambda_dispersion   = numpy.sqrt(numpy.abs(lambda_eig))
     eigenvectors        = [ V_matrix[:,m].flatten() for m in range(V_matrix.shape[1]) ]
     return lambda_eig,lambda_dispersion,eigenvectors,V_matrix
 
-def calc_correlation_matrices(S,DeltaT=None,overlap_DeltaT=False,
-    smooth : SmoothingType = False,smooth_args=None,
-    binarize=True,spk_threshold=59.0,
-    rowvar=False,nandiag=True,
-    filterSpkFreq:FilterType=False,filter_args=None):
+def calc_correlation_matrices(S, DeltaT=None, overlap_DeltaT=False,
+    smooth : SmoothingType = False, smooth_args=None,
+    binarize=True, spk_threshold=59.0,
+    rowvar=True, nandiag=True,
+    filterSpkFreq: FilterType = False, filter_args=None):
     """
-    Computes a sequence of correlation (covariance) matrices from a spike time series matrix `S`.
-    If DeltaT is given, the time series is divided into a sequence of (possibly overlapping) intervals of length 'DeltaT'.
-    If both smoothing and filtering are applied, the spike data is first smoothed, and then filtered.
-    If binarization is applied, the spike data is converted to binary before smoothing and filtering.
+    Compute one or more correlation (covariance) matrices from a spiketrain array `S`
+    where each row corresponds to a neuron and each column corresponds to a time point.
 
-    Parameters:
+    The function can segment the time series into intervals of length `DeltaT` (possibly
+    overlapping) and compute a correlation matrix for each segment. Optional preprocessing
+    steps include binarization, smoothing, and spike-frequency filtering.
+
+    Parameters
     ----------
-    S : ndarray
-        A 2D array representing spike time series. Each row or column corresponds to a time point or neuron,
-        depending on the `rowvar` flag. Default: rows are time points and columns are neurons.
-
+    S : ndarray of shape (N, T)
+        Spiketrain matrix, where rows correspond to neurons and columns correspond to time points.
+        Typically the output of `spike_times_to_spiketrain()`.
     DeltaT : int, optional
-        Length of each time interval (in number of rows of `S`) used to compute individual correlation matrices.
-        If None, the entire time series is used as a single interval.
-    overlap_DeltaT : bool, optional
-        If True, uses overlapping time intervals for correlation computation. Otherwise, uses adjacent intervals.
-
+        Length of each time interval (in number of time points) used to compute an individual
+        correlation matrix. If None, the entire time series is treated as one interval.
+    overlap_DeltaT : bool, default=False
+        If True, uses overlapping time intervals for correlation computation.
+        Otherwise, uses adjacent non-overlapping windows.
     smooth : SmoothingType, optional
-        Whether to apply smoothing to the spike data. See 'SmoothingType' for options.
+        Whether to apply smoothing to the spike data before correlation calculation.
+        See `SmoothingType` for available options.
     smooth_args : dict, optional
+        Additional arguments for the smoothing function, e.g.:
+        ```
         dt=0.01, stddev=0.1, J=None, kernel_size=10
-        stddev -> Standard deviation used for Gaussian smoothing. Ignored if `smooth` is False or 'mexican'.
-        J      -> Additional parameter passed to the smoothing function. Typically used for 'mexican' smoothing.
-
-    binarize : bool, optional
-        If True, converts the spike data to binary format using a threshold.
-    spk_threshold : float, optional
-        Threshold used to binarize spike data. Values above this are considered spikes.
-
-    rowvar : bool, optional
-        If True, treats rows as variables (neurons) and columns as observations (time points).
-        If False, treats columns as variables.
-    nandiag : bool, optional
-        If True, sets the diagonal of each correlation matrix to NaN to ignore self-correlations.
-
+        ```
+        - `stddev`: Standard deviation for Gaussian smoothing.
+        - `J`: Extra parameter (used for e.g. 'mexican' smoothing).
+    binarize : bool, default=True
+        If True, converts the spike data to binary format using a threshold before smoothing/filtering.
+    spk_threshold : float, default=59.0
+        Threshold used for binarization; values above this are treated as spikes (1.0), others as 0.0.
+    rowvar : bool, default=True
+        Controls variable orientation for covariance calculation (as in `numpy.cov`):
+        - If `True` (default), each row of `S` is a variable (neuron), and columns are time points.
+        - If `False`, each column is a variable.
+        Normally you should leave this as `False` when using `S` from `spike_times_to_spiketrain`.
+    nandiag : bool, default=True
+        If True, replaces the diagonal of each correlation matrix with NaN to ignore self-correlations.
     filterSpkFreq : FilterType, optional
-        Whether to apply filtering to the spike series before computing correlations. See FilterType for options.
-        kernel_size=3,fs=10.0,cutoff=1.0,order=5,noise=None
+        Whether to apply frequency-domain filtering to the spike series before computing correlations.
+        See `FilterType` for available options.
+    filter_args : dict, optional
+        Additional arguments for spike-frequency filtering, e.g.:
+        ```
+        kernel_size=3, fs=10.0, cutoff=1.0, order=5, noise=None
+        ```
 
-    Returns:
+    Returns
     -------
     C : ndarray or list of ndarrays
-        A single correlation matrix if only one interval is used, or a list of matrices for each interval.
-
+        - If only one interval is used, returns a single 2D array of shape (N, N),
+          containing the neuron–neuron covariance (or correlation) matrix.
+        - If multiple intervals are used, returns a list of such matrices, one per interval.
     tRange : tuple or list of tuples
-        A single tuple (start, end) if only one interval is used, or a list of such tuples for each interval.
+        - If only one interval is used, returns a single tuple `(t_start, t_end)` giving
+          the time range of that interval.
+        - If multiple intervals are used, returns a list of tuples for each interval.
 
-    Notes:
+    Notes
     -----
-    - NaN values in the correlation matrices are replaced with 0.0, except on the diagonal if `nandiag` is True.
-    - The function uses covariance (`numpy.cov`) rather than correlation (`numpy.corrcoef`) for matrix computation.
+    - The function uses covariance (`numpy.cov`) rather than correlation (`numpy.corrcoef`)
+      for matrix computation.
+    - NaN entries in the correlation matrices are replaced with 0.0, except along the diagonal
+      if `nandiag=True`.
+    - When both smoothing and filtering are applied, smoothing occurs first.
+    - For overlapping windows (`overlap_DeltaT=True`), the function uses `_get_corr_timerange_overlap`
+      to compute window boundaries; otherwise it uses `_get_corr_timerange_adjacent`.
+    - Suitable for analyzing population-level synchrony or pairwise correlations between neurons.
     """
-    if rowvar:
-        S = numpy.transpose(S)
+    tind = 1 if rowvar else 0
     if DeltaT is None:
-        DeltaT = S.shape[0]
+        DeltaT = S.shape[tind]
     if binarize:
         S = get_binary_spike_series(S,spk_threshold=spk_threshold)
     if smooth:
-        S = smooth_spikes(S,smooth=smooth,**misc._get_kwargs(smooth_args))
+        S = smooth_spikes(S,smooth=smooth,rowvar=rowvar,**misc._get_kwargs(smooth_args))
     if filterSpkFreq:
-        S = filter_spikes(S,**misc._get_kwargs(filter_args))
+        S = filter_spikes(S,rowvar=rowvar,**misc._get_kwargs(filter_args))
     if overlap_DeltaT:
-        nT             = S.shape[0] - 1
+        nT             = S.shape[tind] - 1
         get_time_range = _get_corr_timerange_overlap
     else:
-        nT             = int(numpy.ceil(float(S.shape[0]) / float(DeltaT)))
+        nT             = int(numpy.ceil(float(S.shape[tind]) / float(DeltaT)))
         get_time_range = _get_corr_timerange_adjacent
     
-    C      = misc.get_empty_list(nT)
-    tRange = misc.get_empty_list(nT)
+    C                                = misc.get_empty_list(nT)
+    tRange                           = misc.get_empty_list(nT)
+    if rowvar:
+        get_time_range_from_spike_matrix = lambda S,t1,t2: S[:,t1:t2]
+    else:
+        get_time_range_from_spike_matrix = lambda S,t1,t2: S[t1:t2,:]
     for n in range(nT):
         t1,t2 = get_time_range(n,DeltaT)
-        if t2 > S.shape[0]:
-            t2 = S.shape[0]
+        t2    = min(S.shape[tind],t2)
         if (t2-t1) > 2:
             tRange[n] = (t1,t2)
-            C[n] = numpy.cov(S[t1:t2,:],rowvar=rowvar) #numpy.corrcoef(S[t1:t2,:],rowvar=rowvar)
+            C[n] = numpy.cov(get_time_range_from_spike_matrix(S,t1,t2),rowvar=rowvar) #numpy.corrcoef(S[t1:t2,:],rowvar=rowvar)
             C[n][numpy.isnan(C[n])] = 0.0
             #if numpy.count_nonzero(numpy.isnan(C[i])) > 0:
             #print('index == %d -> [%d;%d]     ---- number of NaN: %d' % (i,t1,t2,numpy.count_nonzero(numpy.isnan(C[i]))))
@@ -407,36 +433,49 @@ def calc_correlation_matrices(S,DeltaT=None,overlap_DeltaT=False,
         tRange = [t for t in tRange if t is not None] 
     return C, tRange
 
-def filter_spikes(S,filter_type:FilterType=None,kernel_size=3,fs=10.0,cutoff=1.0,order=5,noise=None):
-    if filter_type == FilterType.NONE or filter_type is False:
+def filter_spikes(S,filter_type:FilterType=None,kernel_size=3,fs=10.0,cutoff=1.0,order=5,noise=None,rowvar=False):
+    if (filter_type == FilterType.NONE) or (filter_type is False):
         return S
+    #if rowvar:
+    #    S        = S.T
+    #    return_S = lambda S: S.T
+    axis = 1 if rowvar else 0
     if filter_type == FilterType.MEDIAN:
-        return filter_spk_freq_median(S, kernel_size)
+        return filter_spk_freq_median(S, kernel_size,rowvar=rowvar)
     elif filter_type == FilterType.LOWPASS:
-        return filter_butter_lowpass(S, cutoff, fs, order)
+        return filter_butter_lowpass(S, cutoff, fs, order,rowvar=rowvar)
     elif filter_type == FilterType.MOVING_AVG:
-        return numpy.apply_along_axis(moving_average, 0, S, n=kernel_size)
+        return numpy.apply_along_axis(moving_average, axis, S, n=kernel_size)
     elif filter_type == FilterType.WIENER:
-        return numpy.apply_along_axis(scipy.signal.wiener, 0, S, mysize=kernel_size, noise=noise)
+        return numpy.apply_along_axis(scipy.signal.wiener, axis, S, mysize=kernel_size, noise=noise)
     else:
         raise ValueError(f"Unknown filter type: {filter_type}. Supported types are given by FilterType enum.")
 
 def _filter_create_butter_lowpass(cutoff, fs, order=5):
-    return scipy.signal.butter(order, cutoff, fs=fs, btype='low', analog=False)
+    return scipy.signal.butter(order, cutoff, fs=fs, btype='low', analog=False, output='sos')
 
-def filter_butter_lowpass(S, cutoff, fs, order=5):
-    b, a = _filter_create_butter_lowpass(cutoff, fs, order=order)
-    n    = S.shape[1]
-    for i in range(n):
-        S[:,i] = scipy.signal.filtfilt(b, a, S[:,i])
-    return S
+def filter_butter_lowpass(S, cutoff, fs, order=5,rowvar=False):
+    #if rowvar:
+    #    S = S.T
+    #b, a = _filter_create_butter_lowpass(cutoff, fs, order=order)
+    #n    = S.shape[1]
+    #for i in range(n):
+    #    S[:,i] = scipy.signal.filtfilt(b, a, S[:,i])
+    #return S.T if rowvar else S
+    sos  = _filter_create_butter_lowpass(cutoff, fs, order=order)
+    axis = 1 if rowvar else 0
+    return numpy.apply_along_axis(lambda x: scipy.signal.sosfiltfilt(sos, x), axis, S)
 
-def filter_spk_freq_median(S,kernel_size=3):
+def filter_spk_freq_median(S,kernel_size=3,rowvar=False):
     """ to be implemented: remove background spikes using median filter """
-    n = S.shape[1]
-    for i in range(n):
-        S[:,i] = scipy.signal.medfilt(S[:,i],kernel_size)
-    return S
+    #if rowvar:
+    #    S = S.T
+    #n = S.shape[1]
+    #for i in range(n):
+    #    S[:,i] = scipy.signal.medfilt(S[:,i],kernel_size)
+    #return S.T if rowvar else S
+    axis = 1 if rowvar else 0
+    return numpy.apply_along_axis(scipy.signal.medfilt, axis, S, kernel_size)
 
 def filter_corrmatrix_null_avg(C,null_avg):
     if type(C) is list:
@@ -493,7 +532,7 @@ def rand_corr_matrix(A, i=None, j=None):
 def get_binary_spike_series(S,spk_threshold=0.0):
     return numpy.asarray(S>spk_threshold,dtype=float)
 
-def smooth_spikes(S, smooth:SmoothingType=None, dt=0.01, stddev=0.1, J=None, kernel_size=10):
+def smooth_spikes(S, smooth:SmoothingType=None, dt=0.01, stddev=0.1, J=None, kernel_size=10, rowvar=False):
     """
     Applies temporal smoothing to binary spike time series using convolution.
 
@@ -525,8 +564,10 @@ def smooth_spikes(S, smooth:SmoothingType=None, dt=0.01, stddev=0.1, J=None, ker
     - Convolution is performed with `mode='same'`, preserving the original length of each spike train.
     - This function is useful for estimating firing rates or preparing spike data for correlation analysis.
     """
-    N = S.shape[1]
-    if smooth == SmoothingType.NONE or smooth is False:
+    #if rowvar:
+    #    S = S.T
+    #N = S.shape[1]
+    if (smooth == SmoothingType.NONE) or (smooth is False):
         return S
     if smooth == SmoothingType.MOVING_AVG:
         kernel = numpy.ones(kernel_size,dtype=float) / float(kernel_size)
@@ -536,9 +577,11 @@ def smooth_spikes(S, smooth:SmoothingType=None, dt=0.01, stddev=0.1, J=None, ker
         kernel = get_mexican_hat_kernel(stddev, J=J, dt=dt)
     else:
         raise ValueError(f"Unknown smoothing type: {smooth}. Supported types are given by SmoothingType enum.")
-    for i in range(N):
-        S[:,i] = numpy.convolve(S[:,i],kernel,mode='same')
-    return S
+    #for i in range(N):
+    #    S[:,i] = numpy.convolve(S[:,i],kernel,mode='same')
+    #return S.T if rowvar else S
+    axis = 1 if rowvar else 0
+    return numpy.apply_along_axis(numpy.convolve,axis,S,kernel,'same')
 
 def moving_average(x, n=10):
     return numpy.convolve(x,numpy.ones(n)/n,mode='same')
@@ -607,7 +650,7 @@ def _convert_activation_deactivation_to_state(S):
     return S
 
 @njit
-def _spike_times_to_spiketrain_numba(t, n, X, T, N, use_X, convert_act_deact_events_to_site_state=False, use_cumsum=True):
+def _spike_times_to_spiketrain_numba(t, n, X, T, N, use_X, convert_act_deact_events_to_site_state=False, use_cumul_sum=True):
     """
     Convert spike time and neuron index arrays into a spiketrain matrix using Numba for performance.
 
@@ -630,7 +673,7 @@ def _spike_times_to_spiketrain_numba(t, n, X, T, N, use_X, convert_act_deact_eve
         S[neuron,time] += X[i] if use_X else 1
     if convert_act_deact_events_to_site_state:
         for i in range(N):
-            if use_cumsum:
+            if use_cumul_sum:
                 S[i,:] = numpy.cumsum(S[i,:])
             else:
                 S[i,:] = _convert_activation_deactivation_to_state(S[i,:])
@@ -639,40 +682,77 @@ def _spike_times_to_spiketrain_numba(t, n, X, T, N, use_X, convert_act_deact_eve
 def _is_integer(num):
     return isinstance(num, int) or (isinstance(num, float) and num.is_integer())
 
-def spike_times_to_spiketrain(t, n, X=None, T=None, N=None, convert_act_deact_events_to_site_state=False, use_cumsum=True):
+def spike_times_to_spiketrain(t, n, X=None, T=None, N=None, 
+                              convert_act_deact_events_to_site_state=False, 
+                              use_cumul_sum=True, 
+                              compress_time=True):
     """
-    Generate a spiketrain matrix from spike times and neuron indices, optionally using spike values.
+    Generate a spiketrain matrix from spike times and neuron indices, optionally using spike magnitudes.
+    
+    The function converts lists of spike times (`t`) and corresponding neuron indices (`n`) into a
+    2D spiketrain matrix `S` of shape `(N, T+1)`, where each row represents a neuron and each column
+    represents a time step. Entries `S[n, t]` contain the spike value (default 1.0 unless `X` is provided).
 
-    Parameters:
-    - t (array-like): Spike times (integers).
-    - n (array-like): Neuron indices corresponding to each spike time.
-    - X (array-like, optional): Spike values or magnitudes. If None, all spikes are treated as 1.0.
-    - T (int, optional): Maximum time index. If None, inferred from max(t).
-    - N (int, optional): Number of neurons. If None, inferred from max(n).
+    Parameters
+    ----------
+    t : array-like of int
+        Spike times (time indices). Non-integer values are rounded and converted to int32.
+        If `compress_time=True`, these times are remapped into a sequential integer range
+        preserving the repetition pattern (e.g., `[0,0,0,1000,1000,100000] → [0,0,0,1,1,2]`).
+        This avoids allocating extremely sparse arrays in memory.
+    n : array-like of int
+        Neuron indices corresponding to each spike in `t`. Must have the same length as `t`.
+    X : array-like, optional
+        Spike magnitudes or values. If provided, must have the same shape as `t`.
+        If omitted, all spikes are treated as having value `1.0`.
+    T : int, optional
+        Maximum time index (i.e., number of time steps - 1). If None, inferred from `max(t)`.
+        Ignored if `compress_time=True` since compressed time is reindexed.
+    N : int, optional
+        Total number of neurons. If None, inferred from `max(n)`.
+    convert_act_deact_events_to_site_state : bool, default=False
+        If True, converts activation/deactivation spike events into binary site states
+        using cumulative summation logic (useful for on/off event representations).
+    use_cumul_sum : bool, default=True
+        If True, cumulative summation is used when integrating spike events over time.
+        Typically used to maintain activation state when spikes represent transitions.
+    compress_time : bool, default=True
+        If True, remaps sparse or large spike time values into sequential integer indices
+        while preserving their relative order and repetition structure.
+        This greatly reduces memory usage for sparse `t`.
 
-    Returns:
-    - S (ndarray of shape (T+1, N)): A 2D spiketrain matrix where each entry S[t, n] represents
-      the spike value (either from X or 1.0) for neuron `n` at time `t`.
+    Returns
+    -------
+    S : ndarray of shape (N, T+1)
+        A 2D spiketrain matrix. Each entry `S[n, t]` contains the spike value (either from `X`
+        or 1.0 if not provided) for neuron `n` at time index `t`.
 
-    Notes:
-    - This function handles input validation and preprocessing before delegating to a Numba-accelerated
-      implementation for performance.
-    - If `X` is provided, it must have the same shape as `t`.
+    Notes
+    -----
+    - When `compress_time=True`, the returned `S` uses a compressed time axis. You can retrieve
+      the mapping between compressed and original times using `numpy.unique(t_original, return_inverse=True)`
+      before calling this function if you need to track the correspondence.
+    - Non-integer time values in `t` are automatically rounded with a warning.
+    - This function handles input validation and preprocessing before delegating to a 
+      Numba-accelerated implementation (`_spike_times_to_spiketrain_numba`) for performance.
     """
     if not all(_is_integer(tt) for tt in t):
         print(' ::: WARNING ::: Converting spike times to integers... If this is not desired, please convert them before calling, e.g., using t/dt')
     t = numpy.asarray(t, dtype=numpy.int32)
+    T = int(T) if misc.exists(T) else int(numpy.max(t))
+    if compress_time:
+        _,t = numpy.unique(t, return_inverse=True)
+        T   = numpy.max(t)
     n = numpy.asarray(n, dtype=numpy.int32)
-    T = int(T) if T is not None else int(numpy.max(t))
-    N = int(N) if N is not None else int(numpy.max(n))
+    N = int(N) if misc.exists(N) else int(numpy.max(n))
     if misc.exists(X):
-        X = numpy.asarray(X, dtype=numpy.int32)
-        assert X.shape == t.shape, 'X must match shape of t'
+        X     = numpy.asarray(X, dtype=numpy.int32)
         use_X = True
+        assert X.shape == t.shape, 'X must match shape of t'
     else:
-        X = numpy.ones_like(t, dtype=numpy.float64)
+        X     = numpy.ones_like(t, dtype=numpy.float64)
         use_X = False
-    return _spike_times_to_spiketrain_numba(t, n, X, T, N, use_X, convert_act_deact_events_to_site_state)
+    return _spike_times_to_spiketrain_numba(t, n, X, T, N, use_X, convert_act_deact_events_to_site_state,use_cumul_sum)
 
 def calc_firing_rate_from_spiketrain(S,is_sequential_update=True):
     """
@@ -753,3 +833,32 @@ def membpotential_to_spike_times(V_data,t=None,spk_threshold=59.0):
     for j in range(N):
         spktimes[j] = t[numpy.nonzero(V_data[:,j] > spk_threshold)]
     return spktimes
+
+def save_correlation_data(fname,C_data,lmbda_data,lmbda_dispersion_data,eigenvectors_data,V_matrix_data,s_data,Cf_data,Cf_std_data,d_info):
+    return scipy.io.savemat(fname, dict(
+            C_data                = io.list_of_arr_to_arr_of_obj(C_data)                 , 
+            lmbda_data            = io.list_of_arr_to_arr_of_obj(lmbda_data)             , 
+            lmbda_dispersion_data = io.list_of_arr_to_arr_of_obj(lmbda_dispersion_data)  , 
+            eigenvectors_data     = io.list_of_arr_to_arr_of_obj(eigenvectors_data)      , 
+            V_matrix_data         = io.list_of_arr_to_arr_of_obj(V_matrix_data)          , 
+            s_data                = io.list_of_arr_to_arr_of_obj(s_data)                 , 
+            Cf_data               = io.list_of_arr_to_arr_of_obj(Cf_data)                , 
+            Cf_std_data           = io.list_of_arr_to_arr_of_obj(Cf_std_data)            , 
+            d_info                = io.structtype_to_recarray(d_info)                    ) , appendmat=True, do_compression=True)
+
+def load_correlation_data(fname,split_variables=True):
+    corr_data                 = scipy.io.loadmat(fname,squeeze_me=True)
+    if split_variables:
+        C_data                = corr_data['C_data']
+        lmbda_data            = corr_data['lmbda_data']
+        lmbda_dispersion_data = corr_data['lmbda_dispersion_data']
+        eigenvectors_data     = corr_data['eigenvectors_data']
+        V_matrix_data         = corr_data['V_matrix_data']
+        s_data                = corr_data['s_data']
+        Cf_data               = corr_data['Cf_data']
+        Cf_std_data           = corr_data['Cf_std_data']
+        d_info                = io.recarray_to_structtype(corr_data['d_info'])
+        return C_data,lmbda_data,lmbda_dispersion_data,eigenvectors_data,V_matrix_data,s_data,Cf_data,Cf_std_data,d_info
+    else:
+        corr_data['d_info']   = io.recarray_to_structtype(corr_data['d_info'])
+        return corr_data

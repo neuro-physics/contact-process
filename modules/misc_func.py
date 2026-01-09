@@ -1,9 +1,13 @@
 import re
 import copy
 import numpy
+import warnings
 import scipy.stats
 import collections
 from numba import njit, types
+
+def get_empty_list(N):
+    return [ None for _ in range(N)]
 
 def _make_scalar(x):
     return x[0] if len(x) == 1 else x
@@ -306,13 +310,16 @@ def outlier_mask_local_filter(y, window=20, z_score_local_threshold=3,return_fil
     else:
         return mask
 
-def linearized_fit(x_data, y_data, x_transform=None, y_transform=None, y_inverse_transform=None, mask=None):
+def linearized_fit(x_data, y_data, x_transform=None, y_transform=None, y_inverse_transform=None, mask=None, slope=None, verbose=True):
     """
     Performs linear regression on transformed data using scipy.stats.linregress.
+    If 'slope' is provided, keeps the slope fixed and fits only the intercept.
+    
     I.e., this function fits a line
         y_transform(y_data) = slope*x_transform(x_data) + intercept
     and returns
-    fitpar = (slope,intercept)
+        fitpar = (slope, intercept)
+    
     Parameters:
     ----------
     x_data : array-like
@@ -327,6 +334,8 @@ def linearized_fit(x_data, y_data, x_transform=None, y_transform=None, y_inverse
         Function to reverse the y_transform for plotting fitted curve in original space.
     mask : numpy-compatible index [e.g., range, int, logical, etc]
         if present, only performs fit on the masked data: x_data[mask], y_data[mask]
+    slope : float or None
+        If provided, fixes the slope and fits only the intercept.
 
     Returns:
     -------
@@ -347,6 +356,9 @@ def linearized_fit(x_data, y_data, x_transform=None, y_transform=None, y_inverse
         y_transform         = lambda y:y
         y_inverse_transform = lambda y:y
     assert exists(y_transform) and exists(y_inverse_transform), "y_inverse_transform must be set when y_transform is set"
+    
+    # func to fit
+    func  = lambda x,*fitpar: y_inverse_transform(fitpar[0] * x_transform(x) + fitpar[1])
 
     # Transform the data
     if exists(mask):
@@ -356,12 +368,27 @@ def linearized_fit(x_data, y_data, x_transform=None, y_transform=None, y_inverse
         x_lin = x_transform(x_data)
         y_lin = y_transform(y_data)
 
+    if len(x_lin) < 2:
+        if verbose:
+            warnings.warn('Only 2 data points, so returning empty fit...')
+        return structtype(func=func,fitpar=(numpy.nan, numpy.nan),R2=numpy.nan,res_sum_sqr=numpy.nan,x_fit=x_lin,y_fit=y_lin)
+
     # Perform linear regression
-    slope, intercept, r_value, _, _ = scipy.stats.linregress(x_lin, y_lin)
+    if exists(slope):
+        # Fit only the intercept (least-squares estimate for fixed slope)
+        # intercept = mean(y - slope*x)
+        intercept = numpy.nanmean(y_lin - slope * x_lin)
+        # Compute correlation coefficient manually for R²
+        y_fit_lin = slope * x_lin + intercept
+        ss_res    = numpy.nansum((y_lin - y_fit_lin) ** 2)
+        ss_tot    = numpy.nansum((y_lin - numpy.nanmean(y_lin)) ** 2)
+        r_value   = numpy.sqrt(1 - ss_res / ss_tot) if ss_tot > 0 else numpy.nan
+    else:
+        # Perform linear regression normally
+        slope, intercept, r_value, _, _ = scipy.stats.linregress(x_lin, y_lin)
 
     # Generate fitted values in original space
     x_fit = numpy.linspace(min(x_data), max(x_data), 100)
-    func  = lambda x,*fitpar: y_inverse_transform(fitpar[0] * x_transform(x) + fitpar[1])
     y_fit = func(x_fit,slope,intercept)
 
     # Compute residuals and RSS in original space
@@ -371,8 +398,37 @@ def linearized_fit(x_data, y_data, x_transform=None, y_transform=None, y_inverse
 
     return structtype(func=func,fitpar=(slope, intercept),R2=r_value**2,res_sum_sqr=rss,x_fit=x_fit,y_fit=y_fit)
 
-def get_empty_list(N):
-    return [ None for _ in range(N)]
+def _get_range_corrected_boundary(a,b,N):
+    if b-a > N:
+        return range(N)
+    if a < 0:
+        a,b = 0,b+abs(a)
+    if b > N:
+        a,b = a-abs(N-b),N
+    return range(a,b)
+
+def linearized_fit_local(n_points,**linearized_fit_args):
+    """
+    performs fits of n_points throughout the whole x-domain using linearized_fit
+    """
+    x_data          = linearized_fit_args.pop('x_data')
+    y_data          = linearized_fit_args.pop('y_data')
+    mask            = linearized_fit_args.pop('mask',None)
+    n_data          = len(x_data)
+    data_fits_range = range(n_points//2,(0 if n_points%2 else 1) + n_data - n_points//2)
+    fr              = get_empty_list(len(data_fits_range))
+    ind_list        = get_empty_list(len(data_fits_range))
+    n               = -1
+    for k in data_fits_range:
+        n         += 1
+        ind        = _get_range_corrected_boundary(k-n_points//2,(1 if n_points%2 else 0)+k+n_points//2,n_data)
+        x          = x_data[ind]
+        y          = y_data[ind]
+        if exists(mask):
+            mask_local = mask[ind]
+        ind_list[n]    = ind
+        fr[n]          = linearized_fit(x,y,mask=mask_local,**linearized_fit_args)
+    return fr,ind_list
 
 
 type_statistic_func = types.FunctionType(types.float64(types.float64[:]))
